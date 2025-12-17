@@ -1,0 +1,9 @@
+numpy
+opencv-python
+scikit-image
+matplotlib
+networkx
+torch
+torch-geometric
+flask
+flask-cors

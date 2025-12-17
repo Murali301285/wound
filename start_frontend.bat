@@ -1,0 +1,9 @@
+@echo off
+set "PATH=%PATH%;C:\Program Files\nodejs"
+echo Starting Frontend...
+cd frontend
+echo Installing dependencies...
+call npm install
+echo Starting Vite Server...
+call npm run dev
+pause
