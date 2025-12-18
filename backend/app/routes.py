@@ -17,7 +17,7 @@ api_bp = Blueprint('api', __name__)
 model = WoundGAT(num_node_features=24, num_classes=7)
 
 # Load trained weights if available
-weights_path = os.path.join(os.path.dirname(__file__), '..', 'model_weights.pth')
+weights_path = os.path.join(os.path.dirname(__file__), '..', 'model_weights_augmented.pth')
 if os.path.exists(weights_path):
     print(f"Loading trained weights from {weights_path}")
     model.load_state_dict(torch.load(weights_path))

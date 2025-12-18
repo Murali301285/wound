@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+backend/venv/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Data
+backend/data/Agument/
+backend/data/cache/
+backend/data/kaggle/
+backend/data/kaggle2/
+backend/data/WoundTissue/
+
+# OS
+.DS_Store
+Thumbs.db
