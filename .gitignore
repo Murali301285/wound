@@ -16,3 +16,7 @@ backend/data/WoundTissue/
 # OS
 .DS_Store
 Thumbs.db
+
+# Secrets
+.env
+backend/.env

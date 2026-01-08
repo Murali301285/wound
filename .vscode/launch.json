@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Flask Backend",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "app.main",
+            "cwd": "${workspaceFolder}/backend",
+            "python": "${workspaceFolder}/backend/venv/Scripts/python.exe",
+            "env": {
+                "FLASK_APP": "app.main",
+                "FLASK_ENV": "development"
+            },
+            "args": [],
+            "jinja": true,
+            "justMyCode": true
+        }
+    ]
+}

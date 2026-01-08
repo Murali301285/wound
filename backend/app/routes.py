@@ -10,11 +10,14 @@ from app.preprocessing import ImageGraphProcessor
 from app.features import FeatureExtractor
 from app.model import WoundGAT
 from app.utils import convert_to_pyg_data
+from app.simulation import HealingSimulator
+from app.scribe import ClinicalScribe
 
 api_bp = Blueprint('api', __name__)
 
 # Initialize components (Lazy loading or global init)
 model = WoundGAT(num_node_features=24, num_classes=7)
+scribe = ClinicalScribe()
 
 # Load trained weights if available
 weights_path = os.path.join(os.path.dirname(__file__), '..', 'model_weights_augmented.pth')
@@ -28,6 +31,7 @@ model.eval()
 
 processor = ImageGraphProcessor(n_segments=200, compactness=20)
 extractor = FeatureExtractor()
+simulator = HealingSimulator()
 
 def gray_world(img):
     """
@@ -275,3 +279,100 @@ def predict():
     }
 
     return jsonify(response)
+
+@api_bp.route('/simulate', methods=['POST'])
+def simulate():
+    if 'image' not in request.files:
+        return jsonify({"error": "No image provided"}), 400
+    
+    file = request.files['image']
+    
+    try:
+        # Read and process image
+        npimg = np.frombuffer(file.read(), np.uint8)
+        img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+        img = gray_world(img)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
+        # 1. Run Standard Prediction to get Stats & Mask
+        # (Reusing pipeline code for simplicity, ideally refactor to function)
+        _, img_float = processor.load_and_preprocess(image_array=img_rgb)
+        segments = processor.generate_superpixels(img_float)
+        rag = processor.build_rag(img_float, segments)
+        node_features = extractor.extract_node_features(img_rgb, segments)
+        pyg_data = convert_to_pyg_data(node_features, rag)
+        
+        with torch.no_grad():
+            out_nodes, out_graph = model(pyg_data)
+        
+        pred_node_labels = out_nodes.argmax(dim=1).numpy()
+        
+        # Calculate Stats
+        tissue_types = ["Granulation", "Slough", "Necrosis", "Maceration", "Tendon", "Bone", "Background"]
+        unique, counts = np.unique(pred_node_labels, return_counts=True)
+        total_nodes = len(pred_node_labels)
+        stats = {}
+        for u, c in zip(unique, counts):
+            stats[tissue_types[u]] = round((c / total_nodes) * 100, 2)
+            
+        # Add Area info
+        # Create rough mask from segments
+        unique_segment_labels = np.unique(segments)
+        wound_mask = np.zeros(segments.shape, dtype=np.uint8)
+        
+        for i, seg_label in enumerate(unique_segment_labels):
+            if pred_node_labels[i] != 6: # Not Background
+                wound_mask[segments == seg_label] = 255
+                
+        contours, _ = cv2.findContours(wound_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        stats['area_px'] = int(cv2.contourArea(max(contours, key=cv2.contourArea))) if contours else 0
+        
+        # 2. Run Simulation
+        simulate_infection = request.form.get('infection') == 'true'
+        simulation_images = simulator.simulate_healing(img_rgb, wound_mask, simulate_infection=simulate_infection)
+        
+        # 3. Get Narrative
+        narrative = simulator.get_clinical_projection(stats)
+        
+        return jsonify({
+            "simulation": simulation_images,
+            "narrative": narrative,
+            "stats": stats
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@api_bp.route('/scribe', methods=['POST'])
+def generate_soap_note_route():
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        stats = data.get('tissue_statistics', {})
+        measurements = data.get('measurements', {})
+        depth = data.get('depth_assessment', 'Unknown')
+        notes = data.get('doctor_notes', '')
+        
+        result = scribe.generate_soap_note(stats, measurements, depth, notes)
+        return jsonify({"soap_note": result})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@api_bp.route('/thermal', methods=['POST'])
+def thermal_simulation():
+    if 'image' not in request.files:
+        return jsonify({"error": "No image provided"}), 400
+        
+    file = request.files['image']
+    npimg = np.frombuffer(file.read(), np.uint8)
+    img_rgb = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+    img_rgb = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2RGB)
+    
+    thermal_b64 = simulator.generate_thermal_simulation(img_rgb)
+    return jsonify({"thermal_image": thermal_b64})
