@@ -17,6 +17,13 @@ backend/data/WoundTissue/
 .DS_Store
 Thumbs.db
 
+# Build outputs & staging
+frontend/dist/
+dist/
+staging_deploy/
+*.zip
+.expo/
+
 # Secrets
 .env
 backend/.env

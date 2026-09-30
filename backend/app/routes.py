@@ -238,8 +238,10 @@ def predict():
         # Re-calculate contours with new mask
         contours, _ = cv2.findContours(wound_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
+    x, y, w, h = 0, 0, 0, 0
     max_width = 0
     max_height = 0
+    has_valid_wound = False
     
     if contours:
         # Find the largest contour (main wound)
@@ -248,6 +250,7 @@ def predict():
         # Filter: Ignore very small contours (noise)
         if cv2.contourArea(c) > 500: # Min area threshold
             x, y, w, h = cv2.boundingRect(c)
+            has_valid_wound = True
             
             # 1. Draw Contour Line (Cyan, Thickness 3)
             # This marks the exact outer boundary of the wound
@@ -273,7 +276,10 @@ def predict():
         "measurements": {
             "width_px": max_width,
             "height_px": max_height,
-            "area_px": int(cv2.contourArea(c)) if contours else 0
+            "area_px": int(cv2.contourArea(c)) if contours else 0,
+            "bbox": [int(x), int(y), int(w), int(h)] if has_valid_wound else None,
+            "img_width": int(img_rgb.shape[1]),
+            "img_height": int(img_rgb.shape[0])
         },
         "segmentation_map": f"data:image/jpeg;base64,{img_str}"
     }

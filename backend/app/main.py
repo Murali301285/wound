@@ -14,4 +14,17 @@ def create_app():
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(debug=True, host='0.0.0.0', port=6500, use_reloader=False)
+    port = int(os.environ.get("PORT", 3365))
+    host = os.environ.get("HOST", "0.0.0.0")
+    use_waitress = os.environ.get("USE_WAITRESS", "1") == "1"
+
+    if use_waitress:
+        try:
+            from waitress import serve
+            print(f"Serving Flask backend with Waitress on http://{host}:{port}")
+            serve(app, host=host, port=port, threads=6)
+        except ImportError:
+            print(f"Waitress not installed, falling back to Flask development server on http://{host}:{port}")
+            app.run(debug=False, host=host, port=port, use_reloader=False)
+    else:
+        app.run(debug=True, host=host, port=port, use_reloader=False)

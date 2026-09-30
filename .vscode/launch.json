@@ -10,11 +10,19 @@
             "python": "${workspaceFolder}/backend/venv/Scripts/python.exe",
             "env": {
                 "FLASK_APP": "app.main",
-                "FLASK_ENV": "development"
+                "FLASK_ENV": "development",
+                "PYTHONPATH": "${workspaceFolder}/backend"
             },
             "args": [],
             "jinja": true,
-            "justMyCode": true
+            "justMyCode": false
+        },
+        {
+            "name": "Chrome: Frontend",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://localhost:5173",
+            "webRoot": "${workspaceFolder}/frontend/src"
         }
     ]
 }

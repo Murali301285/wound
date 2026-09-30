@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Activity, FileText, AlertCircle, Loader2, RefreshCw, Info, X, Ruler, Download, MessageSquare, PenTool, Lightbulb, Box, CheckCircle2, TrendingUp, User, Flame } from 'lucide-react';
+import { Upload, Activity, FileText, AlertCircle, Loader2, RefreshCw, Info, X, Ruler, Download, MessageSquare, PenTool, Lightbulb, Box, CheckCircle2, TrendingUp, User, Flame, Maximize2 } from 'lucide-react';
 import Wound3DViewer from './components/Wound3DViewer';
+import WoundRulerFrame from './components/WoundRulerFrame';
+import WoundFullViewerModal from './components/WoundFullViewerModal';
 import { jsPDF } from "jspdf";
 import clsx from 'clsx';
+import { API_BASE_URL } from './config';
 
 function App() {
   /* State */
@@ -13,6 +16,7 @@ function App() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [result, setResult] = useState(null);
+  const [showFullModal, setShowFullModal] = useState(false);
 
   // Comparison Analysis State (Image 2)
   const [compareImage, setCompareImage] = useState(null);
@@ -44,6 +48,8 @@ function App() {
   const compareInputRef = useRef(null); // Ref for 2nd image
   const imageRef = useRef(null);
   const containerRef = useRef(null);
+  const rulerFrameRef = useRef(null);
+  const compareRulerFrameRef = useRef(null);
 
   const handleImageSelect = (e, isCompare = false) => {
     const file = e.target.files[0];
@@ -81,7 +87,7 @@ function App() {
       const formData = new FormData();
       formData.append('image', selectedImage);
 
-      const res = await fetch('http://127.0.0.1:6500/api/thermal', {
+      const res = await fetch(`${API_BASE_URL}/thermal`, {
         method: 'POST',
         body: formData
       });
@@ -107,7 +113,7 @@ function App() {
     formData.append('image', selectedImage);
 
     try {
-      const response = await fetch('http://127.0.0.1:6500/api/predict', {
+      const response = await fetch(`${API_BASE_URL}/predict`, {
         method: 'POST',
         body: formData,
       });
@@ -135,8 +141,8 @@ function App() {
       const fd2 = new FormData(); fd2.append('image', compareImage);
 
       const [res1, res2] = await Promise.all([
-        fetch('http://127.0.0.1:6500/api/predict', { method: 'POST', body: fd1 }),
-        fetch('http://127.0.0.1:6500/api/predict', { method: 'POST', body: fd2 })
+        fetch(`${API_BASE_URL}/predict`, { method: 'POST', body: fd1 }),
+        fetch(`${API_BASE_URL}/predict`, { method: 'POST', body: fd2 })
       ]);
 
       if (!res1.ok || !res2.ok) throw new Error("One or both analyses failed.");
@@ -165,7 +171,7 @@ function App() {
         doctor_notes: doctorNotes
       };
 
-      const response = await fetch('http://127.0.0.1:6500/api/scribe', {
+      const response = await fetch(`${API_BASE_URL}/scribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -192,7 +198,7 @@ function App() {
     formData.append('infection', simulateInfection);
 
     try {
-      const response = await fetch('http://127.0.0.1:6500/api/simulate', {
+      const response = await fetch(`${API_BASE_URL}/simulate`, {
         method: 'POST',
         body: formData,
       });
@@ -408,7 +414,7 @@ function App() {
   };
 
   /* PDF Generation Logic */
-  const generatePDF = () => {
+  const generatePDF = async () => {
     if (!result || !previewUrl) return;
 
     const doc = new jsPDF();
@@ -548,8 +554,16 @@ function App() {
       }
 
       if (result.segmentation_map) {
-        doc.text("AI Segmentation Map", margin + imgWidth + margin, yPos - 2);
-        doc.addImage(result.segmentation_map, "PNG", margin + imgWidth + margin, yPos, imgWidth, imgHeight);
+        doc.text(pixelsPerCm ? "AI Segmentation Map (Calibrated Scales)" : "AI Segmentation Map", margin + imgWidth + margin, yPos - 2);
+        let segImgData = result.segmentation_map;
+        if (rulerFrameRef.current?.getFramedCanvasDataUrl) {
+          try {
+            segImgData = await rulerFrameRef.current.getFramedCanvasDataUrl();
+          } catch (e) {
+            console.error("Error generating framed canvas for PDF:", e);
+          }
+        }
+        doc.addImage(segImgData, "JPEG", margin + imgWidth + margin, yPos, imgWidth, imgHeight);
       }
     } catch (err) {
       console.error("Error adding images to PDF:", err);
@@ -682,18 +696,25 @@ function App() {
 
       {currentView === 'single' && (
         <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column: Upload & Preview */}
+          {/* Left Column: Original Uploaded Image & Calibration Controls */}
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Upload className="w-5 h-5 text-blue-600" />
-                Image Upload
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-blue-600" />
+                  {previewUrl ? "Original Uploaded Image" : "Image Upload"}
+                </h2>
+                {pixelsPerCm && (
+                  <span className="text-xs bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-md border border-emerald-200 font-medium font-mono">
+                    Scale: 1cm = {Math.round(pixelsPerCm)}px
+                  </span>
+                )}
+              </div>
 
               <div
                 className={clsx(
-                  "border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer relative",
-                  previewUrl ? "border-blue-200 bg-blue-50" : "border-slate-300 hover:border-blue-400"
+                  "border-2 border-dashed rounded-xl p-4 text-center transition-colors cursor-pointer relative min-h-[260px] flex items-center justify-center",
+                  previewUrl ? "border-blue-200 bg-slate-900" : "border-slate-300 hover:border-blue-400 bg-slate-50/50"
                 )}
                 onClick={() => !previewUrl && fileInputRef.current?.click()}
                 ref={containerRef}
@@ -707,12 +728,12 @@ function App() {
                 />
 
                 {previewUrl ? (
-                  <div className="relative inline-block">
+                  <div className="relative inline-block max-w-full">
                     <img
                       ref={imageRef}
                       src={previewUrl}
-                      alt="Preview"
-                      className={clsx("max-h-80 mx-auto rounded-lg shadow-md", isCalibrating && "cursor-crosshair")}
+                      alt="Original Preview"
+                      className={clsx("max-h-80 mx-auto rounded-lg shadow-md object-contain", isCalibrating && "cursor-crosshair")}
                       onMouseDown={handleMouseDown}
                       onMouseMove={handleMouseMove}
                       onMouseUp={handleMouseUp}
@@ -731,16 +752,24 @@ function App() {
                     {/* Floating Tools */}
                     <div className="absolute top-3 right-3 flex flex-col gap-2">
                       <button
+                        onClick={(e) => { e.stopPropagation(); setShowFullModal(true); }}
+                        className="p-2 rounded-full shadow-sm backdrop-blur-sm transition-all border bg-white/80 border-slate-200 text-slate-700 hover:text-blue-600 hover:bg-white"
+                        title="Full View / Maximize Modal"
+                      >
+                        <Maximize2 className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={(e) => { e.stopPropagation(); handleThermalToggle(); }}
                         className={clsx(
                           "p-2 rounded-full shadow-sm backdrop-blur-sm transition-all border",
-                          showThermal ? "bg-red-500/90 border-red-400 text-white shadow-red-200" : "bg-white/80 border-slate-200 text-slate-400 hover:text-red-500 hover:bg-white"
+                          showThermal ? "bg-red-500/90 border-red-400 text-white shadow-red-200" : "bg-white/80 border-slate-200 text-slate-700 hover:text-red-500 hover:bg-white"
                         )}
                         title="Thermal Inflammation View"
                       >
                         <Flame className="w-4 h-4" />
                       </button>
                     </div>
+
                     {/* Draw Calibration Line */}
                     {calibrationLine.start && calibrationLine.end && (
                       <svg className="absolute top-0 left-0 w-full h-full pointer-events-none">
@@ -779,15 +808,20 @@ function App() {
                       isCalibrating ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
                     )}
                   >
-                    <Ruler className="w-4 h-4" />
+                    <Ruler className="w-4 h-4 text-blue-600" />
                     {isCalibrating ? "Drag line on image..." : (pixelsPerCm ? "Recalibrate Scale" : "Set Scale (Optional)")}
                   </button>
 
-                  {pixelsPerCm && (
-                    <div className="px-3 py-2 bg-green-50 text-green-700 text-xs rounded-lg border border-green-200 flex items-center">
-                      Scale Set: 1cm = {Math.round(pixelsPerCm)}px
-                    </div>
-                  )}
+                  <button
+                    onClick={handleThermalToggle}
+                    className={clsx(
+                      "py-2 px-3 rounded-lg text-sm font-medium border flex items-center gap-1.5",
+                      showThermal ? "bg-red-50 border-red-300 text-red-600" : "border-slate-200 hover:bg-slate-50 text-slate-700 bg-white"
+                    )}
+                  >
+                    <Flame className="w-4 h-4 text-red-500" />
+                    Thermal
+                  </button>
                 </div>
               )}
 
@@ -809,7 +843,7 @@ function App() {
                 ) : (
                   <>
                     <Activity className="w-5 h-5" />
-                    Analyze Wound
+                    {result ? "Re-Analyze Wound" : "Analyze Wound"}
                   </>
                 )}
               </button>
@@ -817,10 +851,10 @@ function App() {
               {selectedImage && !loading && (
                 <button
                   onClick={handleReset}
-                  className="w-full mt-2 py-3 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-all flex items-center justify-center gap-2"
+                  className="w-full mt-2 py-2.5 rounded-xl font-medium text-slate-600 hover:bg-slate-100 transition-all flex items-center justify-center gap-2 border border-slate-200 text-sm"
                 >
-                  <RefreshCw className="w-5 h-5" />
-                  Reset / Upload New
+                  <RefreshCw className="w-4 h-4" />
+                  Upload New Image
                 </button>
               )}
 
@@ -831,179 +865,189 @@ function App() {
                 </div>
               )}
             </div>
+
+            {/* AI Smart Recommendations on Left Column */}
+            {result && (
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Lightbulb className="w-5 h-5 text-yellow-500" />
+                  AI Smart Recommendations
+                </h2>
+                <div className="bg-yellow-50 rounded-xl p-4 border border-yellow-100">
+                  <ul className="space-y-2">
+                    {getRecommendations(result.tissue_statistics).map((rec, idx) => (
+                      <li key={idx} className="flex gap-2 text-sm text-slate-700">
+                        <span className="mt-0.5">•</span>
+                        <span>{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[10px] text-slate-400 mt-3 border-t border-yellow-200 pt-2 font-medium uppercase tracking-wider">
+                    AI Generated Suggestion • Clinical verification required
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Right Column: Results */}
+          {/* Right Column: Output Results (4-Sided Scale Map, 3D Button, Depth, Dimensions, Tissue Breakdown) */}
           <div className="space-y-6">
-            {
-              result ? (
-                <>
-                  {/* Depth Assessment Card */}
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                    <div className="flex items-center justify-between mb-4">
+            {result ? (
+              <>
+                {/* 1. Merged Clinical Assessment & Calibrated Tissue Map Card */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
                       <h2 className="text-lg font-semibold flex items-center gap-2">
                         <FileText className="w-5 h-5 text-blue-600" />
-                        Clinical Assessment
+                        Clinical Assessment & Tissue Map
                       </h2>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={generatePDF}
-                          className="text-sm text-green-600 hover:text-green-800 font-medium flex items-center gap-1 px-3 py-1.5 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors shadow-sm"
-                        >
-                          <Download className="w-4 h-4" />
-                          Download Report
-                        </button>
-                        <button
-                          onClick={handleReset}
-                          className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 px-3 py-1.5 hover:bg-blue-50 rounded-lg transition-colors"
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                          New Analysis
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* 3D View Button */}
-                    <button
-                      onClick={() => setShow3D(true)}
-                      className="w-full mb-6 flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl shadow-md hover:shadow-lg transition-all font-semibold"
-                    >
-                      <Box className="w-5 h-5" />
-                      View in 3D (Depth Visualization)
-                    </button>
-
-                    <div className="flex items-center justify-between bg-slate-50 p-4 rounded-xl border border-slate-100">
-                      <div>
-                        <p className="text-slate-500 text-sm">Predicted Depth</p>
-                        <p className="text-xl font-bold text-slate-900">{result.depth_assessment}</p>
-                      </div>
-                      <div className={clsx(
-                        "px-4 py-1 rounded-full text-sm font-medium",
-                        result.depth_assessment === "Superficial" ? "bg-green-100 text-green-700" :
-                          result.depth_assessment === "Partial-Thickness" ? "bg-yellow-100 text-yellow-700" :
-                            "bg-red-100 text-red-700"
-                      )}>
-                        {result.depth_assessment === "Superficial" ? "Low Risk" : "Attention Required"}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* AI Recommendations Card */}
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                      <Lightbulb className="w-5 h-5 text-yellow-500" />
-                      AI Smart Recommendations
-                    </h2>
-                    <div className="bg-yellow-50 rounded-xl p-4 border border-yellow-100">
-                      <ul className="space-y-2">
-                        {getRecommendations(result.tissue_statistics).map((rec, idx) => (
-                          <li key={idx} className="flex gap-2 text-sm text-slate-700">
-                            <span className="mt-0.5">•</span>
-                            <span>{rec}</span>
-                          </li>
-                        ))}
-                      </ul>
-                      <p className="text-[10px] text-slate-400 mt-3 border-t border-yellow-200 pt-2 font-medium uppercase tracking-wider">
-                        AI Generated Suggestion • Clinical verification required
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Measurements Card */}
-                  {result.measurements && (
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                      <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <Activity className="w-5 h-5 text-blue-600" />
-                        Wound Dimensions {pixelsPerCm ? "(Calibrated)" : "(Approx)"}
-                      </h2>
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="bg-slate-50 p-3 rounded-lg text-center border border-slate-100">
-                          <p className="text-xs text-slate-500 mb-1">Max Width</p>
-                          <p className="font-bold text-slate-900">
-                            {pixelsPerCm
-                              ? `${convertPxToCm(result.measurements.width_px)} cm`
-                              : `${result.measurements.width_px} px`}
-                          </p>
-                        </div>
-                        <div className="bg-slate-50 p-3 rounded-lg text-center border border-slate-100">
-                          <p className="text-xs text-slate-500 mb-1">Max Height</p>
-                          <p className="font-bold text-slate-900">
-                            {pixelsPerCm
-                              ? `${convertPxToCm(result.measurements.height_px)} cm`
-                              : `${result.measurements.height_px} px`}
-                          </p>
-                        </div>
-                        <div className="bg-slate-50 p-3 rounded-lg text-center border border-slate-100">
-                          <p className="text-xs text-slate-500 mb-1">Area</p>
-                          <p className="font-bold text-slate-900">
-                            {pixelsPerCm
-                              ? `${convertAreaToCm2(result.measurements.area_px)} cm²`
-                              : `${result.measurements.area_px} px²`}
-                          </p>
-                        </div>
-                      </div>
-                      {!pixelsPerCm && (
-                        <p className="text-xs text-slate-400 mt-3 italic">
-                          * Values are in pixels. Use the "Set Scale" tool above to convert to cm.
-                        </p>
+                      {pixelsPerCm && (
+                        <span className="text-xs bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-md border border-emerald-200 font-medium font-mono">
+                          1cm = {Math.round(pixelsPerCm)}px
+                        </span>
                       )}
                     </div>
-                  )}
 
-                  {/* Tissue Statistics */}
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                    <h2 className="text-lg font-semibold mb-4">Tissue Composition</h2>
-                    <div className="space-y-4">
-                      {Object.entries(result.tissue_statistics).map(([tissue, percentage]) => (
-                        <div key={tissue}>
-                          <div className="flex justify-between text-sm mb-1">
-                            <span className="font-medium text-slate-700">{tissue}</span>
-                            <span className="text-slate-500">{percentage}%</span>
-                          </div>
-                          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className={clsx("h-full rounded-full",
-                                tissue === 'Granulation' ? 'bg-red-500' :
-                                  tissue === 'Slough' ? 'bg-yellow-400' :
-                                    tissue === 'Eschar' ? 'bg-black' :
-                                      'bg-blue-400'
-                              )}
-                              style={{ width: `${percentage}%` }}
-                            />
-                          </div>
-                        </div>
-                      ))}
+                    {/* Action Icons: Maximize Full View, Download Report & New Analysis */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setShowFullModal(true)}
+                        className="p-2 text-slate-700 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition-colors shadow-sm"
+                        title="Full View / Maximize Modal"
+                      >
+                        <Maximize2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={generatePDF}
+                        className="p-2 text-green-600 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors shadow-sm"
+                        title="Download Clinical PDF Report"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={handleReset}
+                        className="p-2 text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors shadow-sm"
+                        title="New Analysis"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
 
-                  {/* Segmentation Map */}
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                    <h2 className="text-lg font-semibold mb-4">Segmentation Map</h2>
-                    <div className="rounded-xl overflow-hidden border border-slate-200">
-                      <img
-                        src={result.segmentation_map}
-                        alt="Segmentation Result"
-                        className="w-full h-auto"
-                      />
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-3 text-xs text-slate-500">
-                      <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-red-500"></div> Granulation</div>
-                      <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-yellow-400"></div> Slough</div>
-                      <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-black"></div> Eschar</div>
-                    </div>
+                  <WoundRulerFrame
+                    ref={rulerFrameRef}
+                    src={result.segmentation_map}
+                    pixelsPerCm={pixelsPerCm}
+                    measurements={result.measurements}
+                    title="Calibrated Wound Tissue Map"
+                    onView3D={() => setShow3D(true)}
+                    onMaximize={() => setShowFullModal(true)}
+                  />
+
+                  <div className="mt-4 flex flex-wrap gap-3 text-xs text-slate-500">
+                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-red-500"></div> Granulation</div>
+                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-yellow-400"></div> Slough</div>
+                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-black"></div> Eschar</div>
+                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-cyan-400"></div> Tendon</div>
+                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-amber-200"></div> Bone</div>
                   </div>
-
-
-                </>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-400 p-12 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
-                  <Activity className="w-16 h-16 mb-4 opacity-20" />
-                  <p>Upload an image to see analysis results</p>
                 </div>
-              )
-            }
-          </div >
-        </main >
+
+                {/* 3. Predicted Depth Card */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                  <div className="flex items-center justify-between bg-slate-50 p-4 rounded-xl border border-slate-100">
+                    <div>
+                      <p className="text-slate-500 text-sm">Predicted Depth</p>
+                      <p className="text-xl font-bold text-slate-900">{result.depth_assessment}</p>
+                    </div>
+                    <div className={clsx(
+                      "px-4 py-1.5 rounded-full text-sm font-bold",
+                      result.depth_assessment === "Superficial" ? "bg-green-100 text-green-700" :
+                        result.depth_assessment === "Partial-Thickness" ? "bg-yellow-100 text-yellow-700" :
+                          "bg-red-100 text-red-700"
+                    )}>
+                      {result.depth_assessment === "Superficial" ? "Low Risk" : "Attention Required"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Wound Dimensions Card */}
+                {result.measurements && (
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                      <Activity className="w-5 h-5 text-blue-600" />
+                      Wound Dimensions {pixelsPerCm ? "(Calibrated)" : "(Approx)"}
+                    </h2>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="bg-slate-50 p-3 rounded-lg text-center border border-slate-100">
+                        <p className="text-xs text-slate-500 mb-1">Max Width</p>
+                        <p className="font-bold text-slate-900">
+                          {pixelsPerCm
+                            ? `${convertPxToCm(result.measurements.width_px)} cm`
+                            : `${result.measurements.width_px} px`}
+                        </p>
+                      </div>
+                      <div className="bg-slate-50 p-3 rounded-lg text-center border border-slate-100">
+                        <p className="text-xs text-slate-500 mb-1">Max Height</p>
+                        <p className="font-bold text-slate-900">
+                          {pixelsPerCm
+                            ? `${convertPxToCm(result.measurements.height_px)} cm`
+                            : `${result.measurements.height_px} px`}
+                        </p>
+                      </div>
+                      <div className="bg-slate-50 p-3 rounded-lg text-center border border-slate-100">
+                        <p className="text-xs text-slate-500 mb-1">Area</p>
+                        <p className="font-bold text-slate-900">
+                          {pixelsPerCm
+                            ? `${convertAreaToCm2(result.measurements.area_px)} cm²`
+                            : `${result.measurements.area_px} px²`}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 5. Tissue Composition Card */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                  <h2 className="text-lg font-semibold mb-4">Tissue Composition</h2>
+                  <div className="space-y-4">
+                    {Object.entries(result.tissue_statistics).map(([tissue, percentage]) => (
+                      <div key={tissue}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="font-medium text-slate-700">{tissue}</span>
+                          <span className="text-slate-500">{percentage}%</span>
+                        </div>
+                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className={clsx("h-full rounded-full",
+                              tissue === 'Granulation' ? 'bg-red-500' :
+                                tissue === 'Slough' ? 'bg-yellow-400' :
+                                  tissue === 'Eschar' ? 'bg-black' :
+                                    tissue === 'Tendon' ? 'bg-cyan-400' :
+                                      tissue === 'Bone' ? 'bg-amber-200' :
+                                        'bg-blue-400'
+                            )}
+                            style={{ width: `${percentage}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* Right column placeholder when no result yet */
+              <div className="h-full min-h-[460px] flex flex-col items-center justify-center text-slate-400 p-12 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                <Activity className="w-16 h-16 mb-4 opacity-20" />
+                <p className="font-medium text-slate-600">No active analysis</p>
+                <p className="text-sm text-slate-400 mt-1 text-center max-w-sm">
+                  Upload a wound image on the left and click "Analyze Wound" to view the 4-sided scale map, tissue breakdown, depth assessment, and 3D depth viewer.
+                </p>
+              </div>
+            )}
+          </div>
+        </main>
       )}
 
       {/* Forecast View */}
@@ -1508,9 +1552,27 @@ function App() {
         )
       }
       {
+        showFullModal && previewUrl && (
+          <WoundFullViewerModal
+            isOpen={showFullModal}
+            onClose={() => setShowFullModal(false)}
+            originalSrc={previewUrl}
+            segmentationSrc={result?.segmentation_map || previewUrl}
+            thermalSrc={thermalImage}
+            pixelsPerCm={pixelsPerCm}
+            measurements={result?.measurements}
+            tissueStatistics={result?.tissue_statistics}
+            depthAssessment={result?.depth_assessment}
+            onOpen3D={() => setShow3D(true)}
+          />
+        )
+      }
+      {
         show3D && previewUrl && (
           <Wound3DViewer
             imageUrl={previewUrl}
+            thermalUrl={thermalImage}
+            initialIsThermal={showThermal}
             onClose={() => setShow3D(false)}
           />
         )
